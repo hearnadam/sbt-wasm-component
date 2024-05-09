@@ -1,5 +1,6 @@
 package cloud.golem
 
+import buildinfo.BuildInfo
 import sbt.*
 import sbt.Keys.*
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport.*
@@ -8,7 +9,6 @@ private[golem] object WasmComponentPluginInternal {
   import WasmComponentPlugin.autoImport.*
 
   private object Versions {
-    val macros = "0.1.0"
     val scalaMacrosParadise = "2.1.1"
   }
 
@@ -16,6 +16,11 @@ private[golem] object WasmComponentPluginInternal {
     lazy val wasmComponentWitFullPath = Def.task(
       wasmComponentWitPath.value / s"${wasmComponentWitName.value}.wit"
     )
+    def checkCommandOrFail(command: String)(error: => String): Unit = {
+      import scala.sys.process.*
+      val commandExists = Seq("bash", "-xc", s"which $command").! == 0
+      if (!commandExists) sys.error(error)
+    }
     Def.settings(
       wasmComponentOutputDirectory := target.value / "dist",
       wasmComponentWitPath := (ThisBuild / baseDirectory).value / "wit",
@@ -32,28 +37,37 @@ private[golem] object WasmComponentPluginInternal {
           import scala.sys.process.*
 
           val bindGenCommand = "golem-scalajs-wit-bindgen"
-          val bindgenCommandExists = Seq("bash", "-xc", s"which $bindGenCommand").! == 0
-          if (!bindgenCommandExists) {
-            sys.error(s"""
-            |$bindGenCommand not found. Run `cargo install $bindGenCommand`.
-            |https://learn.golem.cloud/docs/building-components/tier-1/scala
-            """.stripMargin)
+          checkCommandOrFail(bindGenCommand) {
+            s"""
+               |$bindGenCommand not found.
+               |
+               |Run `cargo install $bindGenCommand` or
+               |refer to https://learn.golem.cloud/docs/building-components/tier-1/scala for installation instructions.
+            """.stripMargin
           }
-
           val output = Seq(
             "bash",
             "-xc",
             s"$bindGenCommand -w ${wasmComponentWitFullPath.value} -p ${wasmComponentPackageName.value}"
           ).!!
-
           IO.write(wasmComponentWitBindgenOutput, output)
           Seq(wasmComponentWitBindgenOutput)
         }
       },
       wasmComponent := {
         import scala.sys.process.*
-        Seq("bash", "-xc", "npm install").!!
-        Seq("bash", "-xc", "npm run build").!!
+
+        val npmCommand = "npm"
+        checkCommandOrFail(npmCommand) {
+          s"""
+            |$npmCommand command not found.
+            |
+            |Refer to https://nodejs.org/en/download for installation instructions.
+          """.stripMargin
+        }
+
+        Seq("bash", "-xc", s"$npmCommand install").!!
+        Seq("bash", "-xc", s"$npmCommand run build").!!
       },
       wasmComponent := (wasmComponent dependsOn (Compile / fullLinkJS)).value,
       Compile / sourceGenerators += Def.taskIf {
@@ -76,7 +90,7 @@ private[golem] object WasmComponentPluginInternal {
       scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
       Compile / fullLinkJS / scalaJSLinkerOutputDirectory := wasmComponentOutputDirectory.value,
       Compile / fastLinkJS / scalaJSLinkerOutputDirectory := wasmComponentOutputDirectory.value,
-      libraryDependencies += "cloud.golem" %% "sbt-wasm-component-macros" % Versions.macros
+      libraryDependencies += "cloud.golem" %% "sbt-wasm-component-macros" % BuildInfo.version
     )
 
   lazy val macroParadiseSettings: Seq[Setting[?]] = Def.settings(
